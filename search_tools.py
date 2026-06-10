@@ -1,6 +1,6 @@
 """
 tools/search_tools.py
-Herramienta de búsqueda web en tiempo real con Tavily.
+Herramienta de búsqueda web en tiempo real con SerpAPI (Google Search).
 """
 
 from langchain_core.tools import tool
@@ -9,54 +9,80 @@ from langchain_core.tools import tool
 @tool
 def search_music_web(query: str) -> str:
     """
-    Busca información musical en internet en tiempo real.
-    Útil para: información de artistas, técnicas avanzadas, géneros específicos,
-    equipamiento, noticias de música, discografías, entrevistas, tutoriales online.
+    Busca información musical en Google en tiempo real usando SerpAPI.
+    Útil para: artistas, técnicas, equipo/gear, noticias de música,
+    discografías, entrevistas, tutoriales, géneros, historia musical.
 
     Args:
-        query: Consulta de búsqueda en cualquier idioma (ej: 'Bill Evans voicing technique',
-               'progresión armónica jazz modal', 'Kurt Cobain guitar tuning')
+        query: Consulta de búsqueda (ej: 'Bill Evans voicing technique',
+               'mejores pedales de overdrive 2024', 'Kurt Cobain guitar tuning')
 
     Returns:
-        Resultados de búsqueda web relevantes con fuentes.
+        Resultados de búsqueda de Google con snippets y fuentes.
     """
     try:
-        from tavily import TavilyClient
+        from serpapi import GoogleSearch
         import os
 
-        api_key = os.getenv("TAVILY_API_KEY")
+        api_key = os.getenv("SERPAPI_API_KEY")
         if not api_key:
-            return "⚠️  TAVILY_API_KEY no configurada. Configura la variable de entorno."
+            return "⚠️  SERPAPI_API_KEY no configurada. Configura la variable de entorno."
 
-        client = TavilyClient(api_key=api_key)
-        # Añadir contexto musical a la búsqueda si no está incluido
-        music_query = query if any(w in query.lower() for w in ["music", "guitar", "piano", "chord", "scale", "song", "band", "artist", "musica", "acorde", "escala"]) \
-                      else f"{query} music"
+        # Añadir contexto musical si la query no lo tiene
+        music_keywords = [
+            "music", "guitar", "piano", "chord", "scale", "song", "band",
+            "artist", "musica", "acorde", "escala", "jazz", "blues", "rock",
+        ]
+        if not any(w in query.lower() for w in music_keywords):
+            query = f"{query} music"
 
-        result = client.search(
-            query=music_query,
-            search_depth="advanced",
-            max_results=4,
-            include_answer=True,
-        )
+        params = {
+            "engine": "google",
+            "q": query,
+            "api_key": api_key,
+            "num": 5,
+            "hl": "es",     # resultados preferentemente en español
+            "gl": "es",     # región España
+        }
+
+        search = GoogleSearch(params)
+        results = search.get_dict()
 
         output_parts = []
 
-        # Respuesta directa de Tavily si existe
-        if result.get("answer"):
-            output_parts.append(f"📋 Resumen:\n{result['answer']}\n")
+        # Answer box (respuesta directa de Google si existe)
+        if "answer_box" in results:
+            box = results["answer_box"]
+            answer = box.get("answer") or box.get("snippet") or box.get("result", "")
+            if answer:
+                output_parts.append(f"📋 Respuesta directa:\n{answer}\n")
 
-        # Resultados individuales
-        for i, r in enumerate(result.get("results", []), 1):
+        # Knowledge graph (panel de conocimiento)
+        if "knowledge_graph" in results:
+            kg = results["knowledge_graph"]
+            title = kg.get("title", "")
+            desc = kg.get("description", "")
+            if title and desc:
+                output_parts.append(f"🎵 {title}: {desc}\n")
+
+        # Resultados orgánicos
+        organic = results.get("organic_results", [])
+        for i, r in enumerate(organic[:4], 1):
+            title = r.get("title", "Sin título")
+            link = r.get("link", "")
+            snippet = r.get("snippet", "")
             output_parts.append(
-                f"[{i}] {r.get('title', 'Sin título')}\n"
-                f"    🔗 {r.get('url', '')}\n"
-                f"    {r.get('content', '')[:300]}...\n"
+                f"[{i}] {title}\n"
+                f"    🔗 {link}\n"
+                f"    {snippet}\n"
             )
 
-        return "\n".join(output_parts) if output_parts else "No se encontraron resultados."
+        if not output_parts:
+            return "No se encontraron resultados para esa búsqueda."
+
+        return "\n".join(output_parts)
 
     except ImportError:
-        return "⚠️  Tavily no instalado. Ejecuta: pip install tavily-python"
+        return "⚠️  SerpAPI no instalado. Ejecuta: pip install google-search-results"
     except Exception as e:
-        return f"❌ Error en búsqueda web: {str(e)}"
+        return f"❌ Error en búsqueda: {str(e)}"

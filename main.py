@@ -15,56 +15,55 @@ import argparse
 from dotenv import load_dotenv
 from langchain_core.messages import HumanMessage
 
-# ── Cargar variables de entorno ──────────────────────────────────────────────
 load_dotenv()
 
 
 def _check_env():
-    """Verifica que las variables críticas estén configuradas."""
+    """Verifica que las variables críticas de Azure y LangSmith estén configuradas."""
     required = {
-        "ANTHROPIC_API_KEY": "https://console.anthropic.com/",
-        "LANGSMITH_API_KEY": "https://smith.langchain.com/",
+        "AZURE_OPENAI_API_KEY":       "Azure Portal → tu recurso OpenAI → Keys and Endpoint",
+        "AZURE_OPENAI_ENDPOINT":      "Azure Portal → tu recurso OpenAI → Keys and Endpoint",
+        "AZURE_OPENAI_DEPLOYMENT_NAME": "Azure AI Foundry → Deployments → nombre del deploy",
+        "LANGSMITH_API_KEY":          "https://smith.langchain.com/",
     }
     missing = []
-    for var, url in required.items():
+    for var, hint in required.items():
         if not os.getenv(var):
-            missing.append(f"  • {var}  →  {url}")
+            missing.append(f"  • {var}\n      → {hint}")
 
     if missing:
-        print("⚠️  Variables de entorno no configuradas:")
+        print("⚠️  Variables de entorno no configuradas:\n")
         print("\n".join(missing))
-        print("\n💡 Copia .env.example → .env y rellena tus API keys.")
+        print("\n💡 Copia .env.example → .env y rellena tus credenciales.")
         sys.exit(1)
 
-    tavily = os.getenv("TAVILY_API_KEY")
-    if not tavily:
-        print("⚠️  TAVILY_API_KEY no configurada → la búsqueda web estará deshabilitada.")
-        print("   Consíguelo gratis en: https://tavily.com/\n")
+    if not os.getenv("SERPAPI_API_KEY"):
+        print("⚠️  SERPAPI_API_KEY no configurada → búsqueda web deshabilitada.")
+        print("   Consíguelo gratis en: https://serpapi.com/ (100 búsquedas/mes)\n")
 
 
 def _print_banner():
-    print("""
+    deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o")
+    print(f"""
 ╔══════════════════════════════════════════════════════════╗
 ║          🎵  Music Composer Assistant  🎵               ║
 ║                                                          ║
 ║  Multi-Agent · LangGraph · LangSmith Tracing            ║
+║  Modelo: Azure AI Foundry → {deployment:<26}║
 ║                                                          ║
 ║  Agentes disponibles:                                    ║
 ║    🎸 Chords Agent  — acordes, progresiones, voicings    ║
 ║    🎼 Theory Agent  — escalas, modos, armonía, géneros   ║
-║    🔍 Search Agent  — búsqueda web en tiempo real        ║
+║    🔍 Search Agent  — Google Search en tiempo real       ║
 ║                                                          ║
 ║  Escribe 'salir' para terminar · 'nuevo' nueva sesión    ║
 ╚══════════════════════════════════════════════════════════╝
 """)
 
 
-def _run_query(app, query: str, thread_id: str, verbose: bool = False) -> str:
-    """Ejecuta una consulta en el grafo y devuelve la respuesta."""
-    config = {
-        "configurable": {"thread_id": thread_id},
-        # LangSmith recoge automáticamente el tracing con las env vars
-    }
+def _run_query(app, query: str, thread_id: str) -> str:
+    """Ejecuta una consulta en el grafo y devuelve la respuesta final."""
+    config = {"configurable": {"thread_id": thread_id}}
 
     input_state = {
         "messages": [HumanMessage(content=query)],
@@ -72,27 +71,23 @@ def _run_query(app, query: str, thread_id: str, verbose: bool = False) -> str:
         "current_topic": "",
     }
 
-    if verbose:
-        print(f"\n🔄 Procesando con thread_id: {thread_id}")
-
     result = app.invoke(input_state, config=config)
 
-    # Extraer la última respuesta del asistente
     messages = result.get("messages", [])
     for msg in reversed(messages):
         if hasattr(msg, "content") and msg.content:
-            if not hasattr(msg, "tool_calls") or not msg.tool_calls:
+            if not getattr(msg, "tool_calls", None):
                 return msg.content
 
     return "No se obtuvo respuesta."
 
 
 def interactive_mode(app):
-    """Modo interactivo con memoria de conversación."""
     _print_banner()
     thread_id = str(uuid.uuid4())[:8]
-    print(f"📌 Sesión iniciada: {thread_id}")
-    print(f"📊 LangSmith: https://smith.langchain.com/ → proyecto '{os.getenv('LANGSMITH_PROJECT', 'music-composer-assistant')}'\n")
+    project = os.getenv("LANGSMITH_PROJECT", "music-composer-assistant")
+    print(f"📌 Sesión: {thread_id}")
+    print(f"📊 LangSmith: https://smith.langchain.com/ → proyecto '{project}'\n")
 
     while True:
         try:
@@ -103,16 +98,13 @@ def interactive_mode(app):
 
         if not user_input:
             continue
-
         if user_input.lower() == "salir":
-            print("👋 ¡Hasta pronto! Que la música te acompañe. 🎶")
+            print("👋 ¡Hasta pronto! 🎶")
             break
-
         if user_input.lower() == "nuevo":
             thread_id = str(uuid.uuid4())[:8]
             print(f"🔄 Nueva sesión: {thread_id}\n")
             continue
-
         if user_input.lower() == "sesion":
             print(f"📌 Sesión actual: {thread_id}\n")
             continue
@@ -127,82 +119,55 @@ def interactive_mode(app):
 
 
 def demo_mode(app):
-    """Ejecuta consultas de demostración para mostrar las capacidades."""
     print("\n🎬 Modo demo — ejecutando consultas de ejemplo\n")
 
     demo_queries = [
-        ("🎸 Acordes", "Dame la progresión ii-V-I en Re mayor con acordes de séptima"),
+        ("🎸 Acordes",      "Dame la progresión ii-V-I en Re mayor con acordes de séptima"),
         ("🔀 Transposición", "Transponer la progresión Am - F - C - G a Bm"),
-        ("🎼 Teoría", "Explícame el modo Dorian y para qué géneros es típico"),
-        ("📚 Escalas", "Qué escala usaría para improvisar sobre un blues en La menor?"),
-        ("🔍 Búsqueda", "Busca información sobre las técnicas de voicing de Bill Evans"),
+        ("🎼 Teoría",        "Explícame el modo Dorian y para qué géneros es típico"),
+        ("📚 Escalas",       "Qué escala usaría para improvisar sobre un blues en La menor?"),
+        ("🔍 Búsqueda",      "Busca información sobre las técnicas de voicing de Bill Evans"),
     ]
 
     thread_id = "demo-session"
-
     for emoji_title, query in demo_queries:
-        print(f"\n{'='*60}")
-        print(f"  {emoji_title}")
-        print(f"  Consulta: {query}")
-        print(f"{'='*60}")
-
+        print(f"\n{'='*60}\n  {emoji_title}\n  Consulta: {query}\n{'='*60}")
         try:
-            response = _run_query(app, query, thread_id)
-            print(f"\n{response}\n")
+            print(f"\n{_run_query(app, query, thread_id)}\n")
         except Exception as e:
             print(f"❌ Error: {e}")
 
-        print()
-
+    project = os.getenv("LANGSMITH_PROJECT", "music-composer-assistant")
     print(f"\n✅ Demo completada. Ver trazas en LangSmith:")
-    print(f"   https://smith.langchain.com/ → proyecto '{os.getenv('LANGSMITH_PROJECT', 'music-composer-assistant')}'")
+    print(f"   https://smith.langchain.com/ → proyecto '{project}'")
 
 
 def print_graph(app):
-    """Imprime la representación ASCII del grafo."""
     print("\n📊 Estructura del grafo:\n")
     try:
         print(app.get_graph().draw_ascii())
     except Exception:
-        print("""
-    START
-      │
-      ▼
-  supervisor  ──────────────────────────────────────┐
-      │                                              │
-      ├──→ chords_agent ──→ END                     │
-      │                                              │
-      ├──→ theory_agent ──→ END                     │
-      │                                              │
-      ├──→ search_agent ──→ END                     │
-      │                                              │
-      └──→ END (FINISH)                             │
-        """)
+        print("  START → supervisor → chords_agent / theory_agent / search_agent → END")
 
-
-# ── Entry point ──────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(description="Music Composer Assistant")
-    parser.add_argument("--demo",  action="store_true", help="Ejecutar consultas de demostración")
-    parser.add_argument("--graph", action="store_true", help="Mostrar estructura del grafo")
+    parser.add_argument("--demo",     action="store_true", help="Ejecutar consultas de demostración")
+    parser.add_argument("--graph",    action="store_true", help="Mostrar estructura del grafo")
     parser.add_argument("--no-check", action="store_true", help="Saltar verificación de env vars")
     args = parser.parse_args()
 
     if not args.no_check:
         _check_env()
 
-    # Importar aquí para que los env vars ya estén cargados
     from src.graph import build_graph
-    print("🔧 Construyendo grafo multi-agente...")
+    print("🔧 Construyendo grafo multi-agente (Azure AI Foundry / GPT-4o)...")
     app, _ = build_graph()
     print("✅ Grafo listo.\n")
 
     if args.graph:
         print_graph(app)
-        return
-
-    if args.demo:
+    elif args.demo:
         demo_mode(app)
     else:
         interactive_mode(app)

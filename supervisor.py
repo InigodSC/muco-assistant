@@ -1,13 +1,14 @@
 """
 agents/supervisor.py
 Agente Supervisor: analiza la intención del usuario y enruta al agente correcto.
+Usa AzureChatOpenAI (GPT-4o) via Azure AI Foundry.
 """
 
-from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import SystemMessage
 from langgraph.graph import END
 
 from src.state import MusicAgentState
+from src.llm import get_llm
 
 
 SUPERVISOR_SYSTEM = """Eres el supervisor de un asistente musical especializado.
@@ -44,16 +45,15 @@ Sin explicaciones. Solo el nombre."""
 def supervisor_node(state: MusicAgentState) -> dict:
     """
     Nodo supervisor: determina qué agente especializado debe responder.
+    Temperatura 0 para máxima consistencia en el enrutamiento.
     """
-    llm = ChatAnthropic(model="claude-opus-4-5", temperature=0)
+    llm = get_llm(temperature=0)
 
     messages = [SystemMessage(content=SUPERVISOR_SYSTEM)] + state["messages"]
     response = llm.invoke(messages)
 
-    # Extraer la decisión de enrutamiento
     decision = response.content.strip().lower()
 
-    # Normalizar posibles variaciones
     if "chord" in decision:
         next_agent = "chords_agent"
     elif "theory" in decision:
@@ -63,7 +63,6 @@ def supervisor_node(state: MusicAgentState) -> dict:
     elif "finish" in decision:
         next_agent = "FINISH"
     else:
-        # Por defecto, teoría musical
         next_agent = "theory_agent"
 
     return {"next": next_agent}
@@ -72,7 +71,6 @@ def supervisor_node(state: MusicAgentState) -> dict:
 def route_supervisor(state: MusicAgentState) -> str:
     """
     Función de enrutamiento condicional basada en la decisión del supervisor.
-    Devuelve el nombre del nodo siguiente.
     """
     next_node = state.get("next", "theory_agent")
     if next_node == "FINISH":
